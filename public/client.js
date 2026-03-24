@@ -1,289 +1,319 @@
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
-
-const ui = document.getElementById("ui");
-const loginPanel = document.getElementById("loginPanel");
-const deadPanel = document.getElementById("deadPanel");
-const joinForm = document.getElementById("joinForm");
-const nameInput = document.getElementById("nameInput");
-const restartBtn = document.getElementById("restartBtn");
-
-const myNameEl = document.getElementById("myName");
-const myHealthEl = document.getElementById("myHealth");
-const myKillsEl = document.getElementById("myKills");
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const loginOverlay = document.getElementById('loginOverlay');
+const deadOverlay = document.getElementById('deadOverlay');
+const joinForm = document.getElementById('joinForm');
+const nameInput = document.getElementById('nameInput');
+const backButton = document.getElementById('backButton');
+const healthBar = document.getElementById('healthBar');
+const healthText = document.getElementById('healthText');
+const statusText = document.getElementById('statusText');
+const nameTag = document.getElementById('nameTag');
+const announcement = document.getElementById('announcement');
+const deadReason = document.getElementById('deadReason');
+const hud = document.getElementById('hud');
 
 const socket = io();
 
-const keys = { up: false, down: false, left: false, right: false };
-let joined = false;
-let dead = false;
-let myId = null;
-let myName = "";
-let world = { width: 3200, height: 3200 };
-let state = { players: [], bullets: [] };
-let screenW = 0;
-let screenH = 0;
+const mouseSprite = new Image();
+mouseSprite.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M44 16c-8 0-14 6-14 14v40c0 27 15 42 34 42 22 0 34-13 34-38V46c0-16-12-30-28-30z" stroke="#0f172a" stroke-width="14" fill="#f8fafc"/>
+    <path d="M54 22c-7 0-12 5-12 12" stroke="#0f172a" stroke-width="10"/>
+    <path d="M78 22c7 0 12 5 12 12" stroke="#0f172a" stroke-width="10"/>
+    <rect x="70" y="56" width="34" height="11" rx="5.5" fill="#0f172a" transform="rotate(25 70 56)"/>
+    <path d="M88 72l18 4" stroke="#0f172a" stroke-width="7"/>
+  </g>
+</svg>`);
 
-const localCursor = {
-  x: window.innerWidth / 2,
-  y: window.innerHeight / 2,
+const state = {
+  connected: false,
+  joined: false,
+  playing: false,
+  pointerLocked: false,
+  worldSize: 3200,
+  id: null,
+  name: '',
+  camera: { x: 0, y: 0 },
+  aimAngle: 0,
+  input: { up: false, down: false, left: false, right: false, fire: false },
+  snapshot: { players: [], bullets: [], worldSize: 3200 },
+  me: null,
+  lastSent: 0,
+  msgTimer: 0,
 };
 
-const mouseImg = new Image();
-mouseImg.src = "/mouse.png";
-
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
-  screenW = window.innerWidth;
-  screenH = window.innerHeight;
-  canvas.width = Math.floor(screenW * dpr);
-  canvas.height = Math.floor(screenH * dpr);
-  canvas.style.width = screenW + "px";
-  canvas.style.height = screenH + "px";
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = `${window.innerWidth}px`;
+  canvas.style.height = `${window.innerHeight}px`;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 }
-window.addEventListener("resize", resize);
+window.addEventListener('resize', resize);
 resize();
 
-function sendInput() {
-  if (!joined || dead) return;
-  socket.emit("input", keys);
+function showAnnouncement(text) {
+  announcement.textContent = text;
+  announcement.classList.add('visible');
+  clearTimeout(state.msgTimer);
+  state.msgTimer = setTimeout(() => announcement.classList.remove('visible'), 2200);
 }
 
-function updateKeys() {
-  keys.up = keys.w || keys.W || keys.ArrowUp || false;
-  keys.down = keys.s || keys.S || keys.ArrowDown || false;
-  keys.left = keys.a || keys.A || keys.ArrowLeft || false;
-  keys.right = keys.d || keys.D || keys.ArrowRight || false;
+function syncUi() {
+  loginOverlay.style.display = state.joined ? 'none' : 'block';
+  hud.style.display = state.playing ? 'block' : 'none';
+  if (deadOverlay.dataset.show === '1') deadOverlay.style.display = 'grid';
+  statusText.textContent = state.connected ? (state.playing ? 'In game' : 'Ready') : 'Connecting…';
+  nameTag.textContent = state.name ? `@${state.name}` : '@Mouse';
 }
 
-window.addEventListener("keydown", (e) => {
+function sendInput(force = false) {
+  if (!state.joined) return;
+  const now = performance.now();
+  if (!force && now - state.lastSent < 33) return;
+  state.lastSent = now;
+  socket.emit('input', { ...state.input, angle: state.aimAngle });
+}
+
+function keyToAction(key, down) {
+  if (key === 'w' || key === 'arrowup') state.input.up = down;
+  if (key === 's' || key === 'arrowdown') state.input.down = down;
+  if (key === 'a' || key === 'arrowleft') state.input.left = down;
+  if (key === 'd' || key === 'arrowright') state.input.right = down;
+}
+
+window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
-  if (e.key === "w" || e.key === "W" || e.key === "ArrowUp") keys.up = true;
-  if (e.key === "s" || e.key === "S" || e.key === "ArrowDown") keys.down = true;
-  if (e.key === "a" || e.key === "A" || e.key === "ArrowLeft") keys.left = true;
-  if (e.key === "d" || e.key === "D" || e.key === "ArrowRight") keys.right = true;
-  updateKeys();
+  keyToAction(e.key.toLowerCase(), true);
+  if (e.key === ' ' && state.playing) {
+    e.preventDefault();
+    state.input.fire = true;
+  }
+  sendInput(true);
+});
+window.addEventListener('keyup', (e) => {
+  keyToAction(e.key.toLowerCase(), false);
+  if (e.key === ' ') state.input.fire = false;
+  sendInput(true);
+});
+
+document.addEventListener('pointerlockchange', () => {
+  state.pointerLocked = document.pointerLockElement === canvas;
+  syncUi();
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!state.playing || !state.pointerLocked) return;
+  state.aimAngle += e.movementX * 0.0035;
   sendInput();
 });
-
-window.addEventListener("keyup", (e) => {
-  if (e.key === "w" || e.key === "W" || e.key === "ArrowUp") keys.up = false;
-  if (e.key === "s" || e.key === "S" || e.key === "ArrowDown") keys.down = false;
-  if (e.key === "a" || e.key === "A" || e.key === "ArrowLeft") keys.left = false;
-  if (e.key === "d" || e.key === "D" || e.key === "ArrowRight") keys.right = false;
-  updateKeys();
-  sendInput();
+canvas.addEventListener('mousedown', (e) => {
+  if (!state.playing) return;
+  if (!state.pointerLocked) {
+    canvas.requestPointerLock();
+    return;
+  }
+  if (e.button === 0) {
+    state.input.fire = true;
+    sendInput(true);
+  }
 });
-
-function clamp(v, min, max) {
-  return Math.max(min, Math.min(max, v));
-}
-
-function joinGame(name) {
-  myName = String(name || "").trim().slice(0, 16);
-  if (!myName) return;
-  socket.emit("join", { name: myName });
-}
-
-joinForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  joinGame(nameInput.value);
-});
-
-restartBtn.addEventListener("click", () => {
-  deadPanel.classList.add("hidden");
-  loginPanel.classList.remove("hidden");
-  ui.style.display = "grid";
-  joined = false;
-  dead = false;
-  socket.connect();
-  nameInput.focus();
-});
-
-socket.on("joinRejected", ({ reason }) => {
-  alert(reason || "Couldn't join.");
-});
-
-socket.on("joined", ({ id, world: w }) => {
-  joined = true;
-  dead = false;
-  myId = id;
-  world = w;
-  ui.style.display = "none";
-});
-
-socket.on("state", (snapshot) => {
-  state = snapshot;
-  if (!myId) return;
-  const me = state.players.find((p) => p.id === myId);
-  if (me) {
-    myHealthEl.textContent = `${Math.max(0, Math.round(me.health))} HP`;
-    myKillsEl.textContent = `${me.kills} Kills`;
-    myNameEl.textContent = me.name;
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 0) {
+    state.input.fire = false;
+    sendInput(true);
   }
 });
 
-socket.on("dead", () => {
-  dead = true;
-  joined = false;
-  socket.disconnect();
-  ui.style.display = "grid";
-  loginPanel.classList.add("hidden");
-  deadPanel.classList.remove("hidden");
+joinForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  socket.emit('join', { name: nameInput.value });
+  syncUi();
 });
 
-function worldToScreen(x, y, me) {
-  return {
-    x: x - me.x + screenW / 2,
-    y: y - me.y + screenH / 2,
-  };
-}
+backButton.addEventListener('click', () => {
+  deadOverlay.dataset.show = '0';
+  deadOverlay.style.display = 'none';
+  loginOverlay.style.display = 'block';
+  state.joined = false;
+  state.playing = false;
+  syncUi();
+});
 
-function drawGrid(me) {
-  const step = 80;
-  const ox = (screenW / 2 - me.x) % step;
-  const oy = (screenH / 2 - me.y) % step;
+socket.on('connect', () => {
+  state.connected = true;
+  syncUi();
+});
 
-  ctx.save();
-  ctx.strokeStyle = "rgba(255,255,255,0.045)";
+socket.on('hello', ({ worldSize }) => {
+  state.worldSize = worldSize || state.worldSize;
+});
+
+socket.on('joined', ({ id, name, worldSize }) => {
+  state.id = id;
+  state.name = name;
+  state.worldSize = worldSize || state.worldSize;
+  state.joined = true;
+  state.playing = true;
+  state.aimAngle = 0;
+  deadOverlay.dataset.show = '0';
+  deadOverlay.style.display = 'none';
+  loginOverlay.style.display = 'none';
+  hud.style.display = 'block';
+  showAnnouncement(`Welcome, ${name}`);
+  canvas.requestPointerLock?.();
+  sendInput(true);
+  syncUi();
+});
+
+socket.on('state', (snapshot) => {
+  state.snapshot = snapshot;
+  const me = snapshot.players.find((p) => p.id === state.id);
+  state.me = me || null;
+  if (me) {
+    state.camera.x = me.x;
+    state.camera.y = me.y;
+    if (!state.pointerLocked) state.aimAngle = me.angle || 0;
+    const ratio = Math.max(0, Math.min(1, me.health / me.maxHealth));
+    healthBar.style.width = `${Math.round(ratio * 100)}%`;
+    healthText.textContent = `${Math.max(0, Math.round(me.health))} / ${me.maxHealth}`;
+  }
+});
+
+socket.on('announcement', ({ text } = {}) => {
+  if (text) showAnnouncement(text);
+});
+
+socket.on('dead', ({ reason } = {}) => {
+  state.playing = false;
+  state.joined = false;
+  state.input = { up: false, down: false, left: false, right: false, fire: false };
+  deadReason.textContent = reason || 'Rejoin to jump back in.';
+  deadOverlay.dataset.show = '1';
+  deadOverlay.style.display = 'grid';
+  loginOverlay.style.display = 'none';
+  hud.style.display = 'none';
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  syncUi();
+});
+
+socket.on('disconnect', () => {
+  state.connected = false;
+  state.joined = false;
+  state.playing = false;
+  hud.style.display = 'none';
+  if (deadOverlay.dataset.show !== '1') {
+    loginOverlay.style.display = 'block';
+    deadOverlay.style.display = 'none';
+  }
+  syncUi();
+});
+
+function drawWorld(camX, camY) {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+
+  ctx.fillStyle = '#eef7ff';
+  ctx.fillRect(0, 0, w, h);
+
+  const grid = 80;
+  const gx = -((camX - w / 2) % grid);
+  const gy = -((camY - h / 2) % grid);
+  ctx.strokeStyle = 'rgba(93, 137, 176, 0.16)';
   ctx.lineWidth = 1;
-
-  for (let x = ox; x < screenW; x += step) {
+  for (let x = gx; x < w; x += grid) {
     ctx.beginPath();
     ctx.moveTo(x, 0);
-    ctx.lineTo(x, screenH);
+    ctx.lineTo(x, h);
     ctx.stroke();
   }
-  for (let y = oy; y < screenH; y += step) {
+  for (let y = gy; y < h; y += grid) {
     ctx.beginPath();
     ctx.moveTo(0, y);
-    ctx.lineTo(screenW, y);
+    ctx.lineTo(w, y);
     ctx.stroke();
   }
-  ctx.restore();
+
+  const worldX = w / 2 - camX;
+  const worldY = h / 2 - camY;
+  ctx.strokeStyle = 'rgba(61, 105, 144, 0.42)';
+  ctx.lineWidth = 6;
+  ctx.strokeRect(worldX + 34, worldY + 34, state.worldSize - 68, state.worldSize - 68);
 }
 
-function drawArenaFrame(me) {
-  const topLeft = worldToScreen(0, 0, me);
-  const bottomRight = worldToScreen(world.width, world.height, me);
-  ctx.save();
-  ctx.strokeStyle = "rgba(140,240,166,0.15)";
-  ctx.lineWidth = 4;
-  ctx.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
-  ctx.restore();
-}
-
-function drawPlayer(p, me) {
-  const pos = worldToScreen(p.x, p.y, me);
-  const size = 48;
-  const angle = p.angle || 0;
-
-  ctx.save();
-  ctx.translate(pos.x, pos.y);
-  ctx.rotate(angle);
-
-  ctx.globalAlpha = p.id === myId ? 1 : 0.9;
-  ctx.drawImage(mouseImg, -size/2, -size/2, size, size);
-
-  // tiny gun barrel
-  ctx.strokeStyle = "rgba(240,248,255,0.9)";
-  ctx.lineWidth = 5;
-  ctx.lineCap = "round";
+function drawBullet(b, camX, camY) {
+  const x = b.x - camX + window.innerWidth / 2;
+  const y = b.y - camY + window.innerHeight / 2;
+  ctx.fillStyle = '#244d8f';
   ctx.beginPath();
-  ctx.moveTo(12, 0);
-  ctx.lineTo(42, 0);
+  ctx.arc(x, y, 4, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawPlayer(p, camX, camY) {
+  const x = p.x - camX + window.innerWidth / 2;
+  const y = p.y - camY + window.innerHeight / 2;
+  const me = p.id === state.id;
+  const size = me ? 58 : 50;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(p.angle || 0);
+  ctx.drawImage(mouseSprite, -size / 2, -size / 2, size, size);
+  ctx.restore();
+
+  ctx.strokeStyle = me ? '#1d7af3' : p.color;
+  ctx.lineWidth = me ? 4 : 3;
+  ctx.beginPath();
+  ctx.arc(x, y, size * 0.62, 0, Math.PI * 2);
   ctx.stroke();
 
-  // nameplate
-  ctx.rotate(-angle);
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  const text = p.name;
-  const tw = ctx.measureText(text).width;
-  ctx.fillRect(-tw/2 - 8, -46, tw + 16, 22);
-  ctx.fillStyle = "#fff";
-  ctx.font = "12px Inter, sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText(text, 0, -30);
+  ctx.fillStyle = '#214064';
+  ctx.font = '600 14px Inter, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(p.name, x, y - size * 0.8);
 
-  // health bar
-  const barW = 44;
-  const barH = 6;
-  const hp = Math.max(0, Math.min(1, p.health / p.maxHealth));
-  ctx.fillStyle = "rgba(255,255,255,0.2)";
-  ctx.fillRect(-barW/2, 34, barW, barH);
-  ctx.fillStyle = hp > 0.5 ? "#8cf0a6" : hp > 0.2 ? "#ffd166" : "#ff5c5c";
-  ctx.fillRect(-barW/2, 34, barW * hp, barH);
+  const barW = 54, barH = 7;
+  const ratio = Math.max(0, Math.min(1, p.health / p.maxHealth));
+  ctx.fillStyle = 'rgba(30,55,90,0.14)';
+  ctx.fillRect(x - barW / 2, y - size * 0.8 + 8, barW, barH);
+  ctx.fillStyle = ratio > 0.5 ? '#31b56f' : (ratio > 0.2 ? '#f0b12d' : '#ef5a5a');
+  ctx.fillRect(x - barW / 2, y - size * 0.8 + 8, barW * ratio, barH);
 
-  ctx.restore();
+  ctx.fillStyle = '#2c3e50';
+  ctx.fillRect(x + Math.cos(p.angle || 0) * 18 - 2, y + Math.sin(p.angle || 0) * 18 - 2, 24, 4);
 }
 
-function drawBullets(me) {
-  ctx.save();
-  for (const b of state.bullets) {
-    const pos = worldToScreen(b.x, b.y, me);
-    ctx.fillStyle = "#ffef9f";
-    ctx.beginPath();
-    ctx.arc(pos.x, pos.y, 4, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
+function drawCrosshair() {
+  const x = window.innerWidth / 2;
+  const y = window.innerHeight / 2;
+  ctx.strokeStyle = 'rgba(29,122,243,.9)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, 12, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - 18, y); ctx.lineTo(x - 8, y);
+  ctx.moveTo(x + 8, y); ctx.lineTo(x + 18, y);
+  ctx.moveTo(x, y - 18); ctx.lineTo(x, y - 8);
+  ctx.moveTo(x, y + 8); ctx.lineTo(x, y + 18);
+  ctx.stroke();
 }
 
-function drawCursor() {
-  ctx.save();
-  ctx.globalAlpha = 0.85;
-  ctx.drawImage(mouseImg, localCursor.x - 16, localCursor.y - 16, 32, 32);
-  ctx.restore();
+function render() {
+  requestAnimationFrame(render);
+  const me = state.me;
+  const camX = me ? me.x : state.camera.x;
+  const camY = me ? me.y : state.camera.y;
+
+  drawWorld(camX, camY);
+  for (const b of state.snapshot.bullets || []) drawBullet(b, camX, camY);
+  for (const p of state.snapshot.players || []) drawPlayer(p, camX, camY);
+  if (state.playing) drawCrosshair();
+  if (state.joined) sendInput();
 }
 
-function tick() {
-  ctx.clearRect(0, 0, screenW, screenH);
-
-  const me = state.players.find((p) => p.id === myId);
-  if (me) {
-    drawGrid(me);
-    drawArenaFrame(me);
-    drawBullets(me);
-
-    for (const p of state.players) drawPlayer(p, me);
-
-    // local fake cursor follows WASD and is shown on top of the game.
-    drawCursor();
-  } else {
-    ctx.fillStyle = "#e8eef4";
-    ctx.font = "24px Inter, sans-serif";
-    ctx.fillText("Waiting to join…", 24, 40);
-  }
-
-  requestAnimationFrame(tick);
-}
-requestAnimationFrame(tick);
-
-window.addEventListener("mousemove", (e) => {
-  localCursor.x = e.clientX;
-  localCursor.y = e.clientY;
-});
-
-window.addEventListener("click", () => {
-  if (!joined || dead) return;
-  const me = state.players.find((p) => p.id === myId);
-  if (!me) return;
-  const angle = Math.atan2(localCursor.y - screenH / 2, localCursor.x - screenW / 2);
-  socket.emit("shoot", { angle });
-});
-
-function moveLocalCursor() {
-  const speed = 7;
-  if (keys.left) localCursor.x -= speed;
-  if (keys.right) localCursor.x += speed;
-  if (keys.up) localCursor.y -= speed;
-  if (keys.down) localCursor.y += speed;
-  localCursor.x = clamp(localCursor.x, 0, screenW);
-  localCursor.y = clamp(localCursor.y, 0, screenH);
-  requestAnimationFrame(moveLocalCursor);
-}
-requestAnimationFrame(moveLocalCursor);
-
-// keep cursor image hidden until in-game, but browser cursor hidden on canvas anyway
-nameInput.focus();
+syncUi();
+render();
