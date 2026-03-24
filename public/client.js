@@ -353,7 +353,7 @@ function drawPlayer(p, camX, camY, zoom) {
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
-  ctx.rotate((p.angle || 0) - Math.PI / 4);
+  ctx.rotate((p.angle || 0) + Math.PI / 4);
 
   if (mouseSprite.complete) {
     ctx.drawImage(mouseSprite, -size / 2, -size / 2, size, size);
