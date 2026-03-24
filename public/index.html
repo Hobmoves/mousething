@@ -2,38 +2,50 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mouse Gun Arena</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MouseThing Arena</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div id="ui" class="overlay">
-    <div class="panel" id="loginPanel">
-      <h1>Mouse Gun Arena</h1>
-      <p>Move with WASD. Click to shoot.</p>
-      <form id="joinForm">
-        <input id="nameInput" maxlength="16" placeholder="Pick a name" autocomplete="off" />
-        <button type="submit">Enter arena</button>
-      </form>
-      <p class="small">Your fake cursor replaces the real one in-game.</p>
-    </div>
+  <canvas id="game"></canvas>
 
-    <div class="panel hidden" id="deadPanel">
-      <h1>You got clipped.</h1>
-      <p>Rejoin with a new or same name.</p>
-      <button id="restartBtn">Back to lobby</button>
+  <div id="announcement" aria-live="polite"></div>
+
+  <div id="hud">
+    <div class="hud-row">
+      <div id="nameTag">@Mouse</div>
+      <div id="statusText">Connecting…</div>
+    </div>
+    <div class="bar"><div id="healthBar"></div></div>
+    <div id="healthText">100 / 100</div>
+    <div id="hint">Click the game to lock pointer · WASD move · mouse turns · click to fire</div>
+  </div>
+
+  <div class="panel" id="loginOverlay">
+    <div class="panel-inner">
+      <div class="brand">
+        <div class="brand-badge">🐭</div>
+        <div>
+          <h1>MouseThing Arena</h1>
+          <p>Bright top-down multiplayer. Other players render live, pointer lock works, and dying kicks you out.</p>
+        </div>
+      </div>
+      <form id="joinForm" class="form">
+        <input id="nameInput" type="text" maxlength="18" placeholder="Pick a name" autocomplete="off" />
+        <button type="submit">Play</button>
+      </form>
     </div>
   </div>
 
-  <canvas id="game"></canvas>
-
-  <div id="hud">
-    <div id="stats">
-      <span id="myName">—</span>
-      <span id="myHealth">100 HP</span>
-      <span id="myKills">0 Kills</span>
+  <div class="overlay" id="deadOverlay">
+    <div class="overlay-card">
+      <h2>You got kicked</h2>
+      <p id="deadReason">Rejoin to jump back in.</p>
+      <button id="backButton">Back to lobby</button>
     </div>
-    <div id="hint">WASD to move your cursor, click to fire.</div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
