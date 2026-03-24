@@ -36,7 +36,7 @@ function spawnPoint() {
 function colorFor(name) {
   let hash = 0;
   for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return ['#5f8cff', '#ff7a59', '#7ed957', '#f4b942', '#b36bff', '#00b8a9'][hash % 6];
+  return ['#111111', '#2b2b2b', '#444444', '#666666'][hash % 4];
 }
 
 function cleanName(raw) {
@@ -72,7 +72,7 @@ function removePlayer(id, silent = false) {
   if (!p) return;
   players.delete(id);
   if (!silent) {
-    io.emit('announcement', { type: 'leave', text: `${p.name} left the arena` });
+    io.emit('announcement', { type: 'leave', text: `${p.name} left` });
   }
 }
 
@@ -95,11 +95,11 @@ function kill(victimId, killerId) {
   const killer = killerId ? players.get(killerId) : null;
   io.emit('announcement', {
     type: 'kill',
-    text: `${killer ? killer.name : 'A mouse'} eliminated ${victim.name}`,
+    text: `${killer ? killer.name : 'mouse'} got ${victim.name}`,
   });
 
   const socket = io.sockets.sockets.get(victimId);
-  if (socket) kick(socket, 'You were eliminated. Rejoin to play again.');
+  if (socket) kick(socket, 'You were eliminated.');
 }
 
 io.on('connection', (socket) => {
@@ -123,7 +123,7 @@ io.on('connection', (socket) => {
     });
 
     socket.emit('joined', { id: socket.id, name: clean, worldSize: WORLD, spawn });
-    io.emit('announcement', { type: 'join', text: `${clean} joined the arena` });
+    io.emit('announcement', { type: 'join', text: `${clean} joined` });
   });
 
   socket.on('input', (input = {}) => {
@@ -199,11 +199,6 @@ function tick() {
       if (Math.hypot(p.x - b.x, p.y - b.y) <= PLAYER_RADIUS + 5) {
         bullets.delete(bulletId);
         p.health -= DAMAGE;
-        const shooter = players.get(b.ownerId);
-        io.emit('announcement', {
-          type: 'hit',
-          text: `${shooter ? shooter.name : 'A mouse'} hit ${p.name}`,
-        });
         if (p.health <= 0) kill(playerId, b.ownerId);
         break;
       }
