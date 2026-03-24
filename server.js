@@ -1,210 +1,221 @@
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
+const path = require('path');
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { cors: { origin: '*' } });
 
-app.use(express.static("public"));
+const PORT = process.env.PORT || 3000;
+const WORLD = 3200;
+const PLAYER_RADIUS = 18;
+const SPEED = 270;
+const BULLET_SPEED = 1100;
+const BULLET_LIFE = 1.15;
+const FIRE_COOLDOWN = 220;
+const DAMAGE = 34;
 
-const TICK_RATE = 20;
-const WORLD = { width: 3200, height: 3200 };
-const PLAYER_RADIUS = 28;
-const BULLET_RADIUS = 5;
+app.use(express.static(path.join(__dirname, 'public')));
 
 const players = new Map();
-const bullets = [];
-const usedNames = new Set();
+const bullets = new Map();
+let bulletSeq = 1;
 
-function clamp(v, min, max) {
-  return Math.max(min, Math.min(max, v));
-}
-
-function makeId() {
-  return Math.random().toString(36).slice(2, 10);
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
 }
 
 function spawnPoint() {
   return {
-    x: 200 + Math.random() * (WORLD.width - 400),
-    y: 200 + Math.random() * (WORLD.height - 400),
+    x: 240 + Math.random() * (WORLD - 480),
+    y: 240 + Math.random() * (WORLD - 480),
   };
 }
 
-function normalizeAngle(a) {
-  while (a < -Math.PI) a += Math.PI * 2;
-  while (a > Math.PI) a -= Math.PI * 2;
-  return a;
+function colorFor(name) {
+  let hash = 0;
+  for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return ['#5f8cff', '#ff7a59', '#7ed957', '#f4b942', '#b36bff', '#00b8a9'][hash % 6];
 }
 
-function broadcastState() {
-  const snapshot = {
-    world: WORLD,
-    players: [...players.values()].map((p) => ({
-      id: p.id,
+function cleanName(raw) {
+  const value = String(raw || '').trim().replace(/\s+/g, ' ').slice(0, 18);
+  return value || 'Mouse';
+}
+
+function snapshot() {
+  return {
+    worldSize: WORLD,
+    players: [...players.entries()].map(([id, p]) => ({
+      id,
       name: p.name,
       x: p.x,
       y: p.y,
       angle: p.angle,
       health: p.health,
       maxHealth: p.maxHealth,
-      kills: p.kills,
+      alive: p.alive,
+      color: p.color,
     })),
-    bullets: bullets.map((b) => ({
-      id: b.id,
+    bullets: [...bullets.entries()].map(([id, b]) => ({
+      id,
       x: b.x,
       y: b.y,
       angle: b.angle,
     })),
   };
-  io.emit("state", snapshot);
 }
 
-function killPlayer(victimId, killerId) {
-  const victim = players.get(victimId);
-  if (!victim) return;
-  if (killerId && players.has(killerId)) {
-    players.get(killerId).kills += 1;
+function removePlayer(id, silent = false) {
+  const p = players.get(id);
+  if (!p) return;
+  players.delete(id);
+  if (!silent) {
+    io.emit('announcement', { type: 'leave', text: `${p.name} left the arena` });
   }
-  victim.socket.emit("dead", {
-    reason: "You got clipped.",
-  });
-  victim.socket.disconnect(true);
 }
 
-function update() {
-  const dt = 1 / TICK_RATE;
+function kick(socket, reason) {
+  const p = players.get(socket.id);
+  if (!p || p.kicked) return;
+  p.kicked = true;
+  socket.emit('dead', { reason });
+  setTimeout(() => {
+    if (socket.connected) socket.disconnect(true);
+  }, 180);
+}
 
-  for (const p of players.values()) {
-    const speed = p.speed;
-    const dx = (p.input.right ? 1 : 0) - (p.input.left ? 1 : 0);
-    const dy = (p.input.down ? 1 : 0) - (p.input.up ? 1 : 0);
+function kill(victimId, killerId) {
+  const victim = players.get(victimId);
+  if (!victim || !victim.alive) return;
+  victim.alive = false;
+  victim.health = 0;
 
-    if (dx !== 0 || dy !== 0) {
-      const len = Math.hypot(dx, dy) || 1;
-      p.vx = (dx / len) * speed;
-      p.vy = (dy / len) * speed;
-      p.angle = Math.atan2(dy, dx);
-    } else {
-      p.vx *= 0.85;
-      p.vy *= 0.85;
+  const killer = killerId ? players.get(killerId) : null;
+  io.emit('announcement', {
+    type: 'kill',
+    text: `${killer ? killer.name : 'A mouse'} eliminated ${victim.name}`,
+  });
+
+  const socket = io.sockets.sockets.get(victimId);
+  if (socket) kick(socket, 'You were eliminated. Rejoin to play again.');
+}
+
+io.on('connection', (socket) => {
+  socket.emit('hello', { worldSize: WORLD });
+
+  socket.on('join', ({ name } = {}) => {
+    const clean = cleanName(name);
+    const spawn = spawnPoint();
+    players.set(socket.id, {
+      name: clean,
+      x: spawn.x,
+      y: spawn.y,
+      angle: Math.random() * Math.PI * 2,
+      color: colorFor(clean),
+      health: 100,
+      maxHealth: 100,
+      alive: true,
+      input: { up: false, down: false, left: false, right: false, fire: false },
+      lastShot: 0,
+      kicked: false,
+    });
+
+    socket.emit('joined', { id: socket.id, name: clean, worldSize: WORLD, spawn });
+    io.emit('announcement', { type: 'join', text: `${clean} joined the arena` });
+  });
+
+  socket.on('input', (input = {}) => {
+    const p = players.get(socket.id);
+    if (!p || !p.alive) return;
+    p.input.up = !!input.up;
+    p.input.down = !!input.down;
+    p.input.left = !!input.left;
+    p.input.right = !!input.right;
+    p.input.fire = !!input.fire;
+    if (Number.isFinite(input.angle)) p.angle = input.angle;
+  });
+
+  socket.on('disconnect', () => removePlayer(socket.id));
+});
+
+let last = Date.now();
+let snapshotTimer = 0;
+
+function tick() {
+  const now = Date.now();
+  const dt = (now - last) / 1000;
+  last = now;
+
+  for (const [id, p] of players) {
+    if (!p.alive) continue;
+
+    const forward = (p.input.up ? 1 : 0) - (p.input.down ? 1 : 0);
+    const strafe = (p.input.right ? 1 : 0) - (p.input.left ? 1 : 0);
+    const sin = Math.sin(p.angle);
+    const cos = Math.cos(p.angle);
+
+    let vx = cos * forward + Math.cos(p.angle + Math.PI / 2) * strafe;
+    let vy = sin * forward + Math.sin(p.angle + Math.PI / 2) * strafe;
+    const len = Math.hypot(vx, vy);
+
+    if (len > 0) {
+      vx /= len;
+      vy /= len;
+      p.x = clamp(p.x + vx * SPEED * dt, PLAYER_RADIUS, WORLD - PLAYER_RADIUS);
+      p.y = clamp(p.y + vy * SPEED * dt, PLAYER_RADIUS, WORLD - PLAYER_RADIUS);
     }
 
-    p.x = clamp(p.x + p.vx * dt, PLAYER_RADIUS, WORLD.width - PLAYER_RADIUS);
-    p.y = clamp(p.y + p.vy * dt, PLAYER_RADIUS, WORLD.height - PLAYER_RADIUS);
+    if (p.input.fire && now - p.lastShot >= FIRE_COOLDOWN) {
+      p.lastShot = now;
+      const angle = p.angle;
+      const dx = Math.cos(angle);
+      const dy = Math.sin(angle);
+      bullets.set(String(bulletSeq++), {
+        ownerId: id,
+        x: p.x + dx * 28,
+        y: p.y + dy * 28,
+        dx: dx * BULLET_SPEED,
+        dy: dy * BULLET_SPEED,
+        angle,
+        age: 0,
+      });
+    }
   }
 
-  for (const b of bullets) {
-    b.x += Math.cos(b.angle) * b.speed * dt;
-    b.y += Math.sin(b.angle) * b.speed * dt;
-    b.life -= dt;
+  for (const [bulletId, b] of bullets) {
+    b.age += dt;
+    b.x += b.dx * dt;
+    b.y += b.dy * dt;
 
-    for (const p of players.values()) {
-      if (p.id === b.ownerId) continue;
-      const dist = Math.hypot(p.x - b.x, p.y - b.y);
-      if (dist < PLAYER_RADIUS + BULLET_RADIUS) {
-        p.health -= b.damage;
-        b.life = 0;
-        if (p.health <= 0) {
-          killPlayer(p.id, b.ownerId);
-        }
+    if (b.age > BULLET_LIFE || b.x < -20 || b.y < -20 || b.x > WORLD + 20 || b.y > WORLD + 20) {
+      bullets.delete(bulletId);
+      continue;
+    }
+
+    for (const [playerId, p] of players) {
+      if (!p.alive || playerId === b.ownerId) continue;
+      if (Math.hypot(p.x - b.x, p.y - b.y) <= PLAYER_RADIUS + 5) {
+        bullets.delete(bulletId);
+        p.health -= DAMAGE;
+        const shooter = players.get(b.ownerId);
+        io.emit('announcement', {
+          type: 'hit',
+          text: `${shooter ? shooter.name : 'A mouse'} hit ${p.name}`,
+        });
+        if (p.health <= 0) kill(playerId, b.ownerId);
         break;
       }
     }
   }
 
-  for (let i = bullets.length - 1; i >= 0; i--) {
-    const b = bullets[i];
-    if (b.life <= 0 || b.x < -50 || b.y < -50 || b.x > WORLD.width + 50 || b.y > WORLD.height + 50) {
-      bullets.splice(i, 1);
-    }
+  if (now - snapshotTimer > 50) {
+    io.emit('state', snapshot());
+    snapshotTimer = now;
   }
-
-  broadcastState();
 }
 
-io.on("connection", (socket) => {
-  socket.on("join", ({ name }) => {
-    name = String(name || "").trim().slice(0, 16);
-    if (!name) {
-      socket.emit("joinRejected", { reason: "Pick a name." });
-      return;
-    }
-    if (usedNames.has(name.toLowerCase())) {
-      socket.emit("joinRejected", { reason: "That name is taken." });
-      return;
-    }
+setInterval(tick, 1000 / 60);
 
-    usedNames.add(name.toLowerCase());
-    const spawn = spawnPoint();
-    const id = makeId();
-    const player = {
-      id,
-      socket,
-      name,
-      x: spawn.x,
-      y: spawn.y,
-      vx: 0,
-      vy: 0,
-      angle: 0,
-      speed: 320,
-      health: 100,
-      maxHealth: 100,
-      kills: 0,
-      input: { up: false, down: false, left: false, right: false },
-    };
-
-    players.set(id, player);
-    socket.data.playerId = id;
-
-    socket.emit("joined", {
-      id,
-      world: WORLD,
-    });
-  });
-
-  socket.on("input", (input) => {
-    const id = socket.data.playerId;
-    if (!id || !players.has(id)) return;
-    const p = players.get(id);
-    p.input = {
-      up: !!input.up,
-      down: !!input.down,
-      left: !!input.left,
-      right: !!input.right,
-    };
-  });
-
-  socket.on("shoot", ({ angle }) => {
-    const id = socket.data.playerId;
-    if (!id || !players.has(id)) return;
-    const p = players.get(id);
-    const a = normalizeAngle(Number(angle) || 0);
-    bullets.push({
-      id: makeId(),
-      ownerId: p.id,
-      x: p.x + Math.cos(a) * 34,
-      y: p.y + Math.sin(a) * 34,
-      angle: a,
-      speed: 980,
-      damage: 20,
-      life: 1.4,
-    });
-  });
-
-  socket.on("disconnect", () => {
-    const id = socket.data.playerId;
-    if (id && players.has(id)) {
-      const name = players.get(id).name.toLowerCase();
-      usedNames.delete(name);
-      players.delete(id);
-    }
-  });
-});
-
-setInterval(update, 1000 / TICK_RATE);
-
-server.listen(process.env.PORT || 3000, () => {
-  console.log("Mouse gun arena running on http://localhost:" + (process.env.PORT || 3000));
-});
+server.listen(PORT, () => console.log(`MouseThing running on ${PORT}`));
