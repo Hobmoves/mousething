@@ -164,10 +164,10 @@ socket.on('joined', ({ id, name, worldSize, spawn }) => {
   state.shockwaves.push({
     x: state.camera.x,
     y: state.camera.y,
-    radius: 10,
-    maxRadius: 90,
+    radius: 18,
+    maxRadius: 160,
+    ttl: 0.45,
     life: 0,
-    ttl: 0.35,
   });
   showAnnouncement(name);
   syncUi();
@@ -353,7 +353,7 @@ function drawPlayer(p, camX, camY, zoom) {
 
   ctx.save();
   ctx.translate(pos.x, pos.y);
-  ctx.rotate((p.angle || 0) + Math.PI / 4);
+  ctx.rotate((p.angle || 0) + Math.PI / 2);
 
   if (mouseSprite.complete) {
     ctx.drawImage(mouseSprite, -size / 2, -size / 2, size, size);
