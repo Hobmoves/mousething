@@ -13,6 +13,9 @@ const hud = document.getElementById('hud');
 
 const socket = io();
 
+const mouseSprite = new Image();
+mouseSprite.src = '/mouse.png';
+
 const state = {
   connected: false,
   joined: false,
@@ -32,6 +35,9 @@ const state = {
   targetZoom: 0.24,
   lobbyZoom: 0.24,
   playZoom: 1,
+  renderPlayers: new Map(),
+  renderBullets: new Map(),
+  shockwaves: [],
 };
 
 function resize() {
@@ -55,6 +61,7 @@ function syncUi() {
   loginOverlay.style.display = state.joined ? 'none' : 'flex';
   hud.style.display = state.playing ? 'block' : 'none';
   deadOverlay.style.display = deadOverlay.dataset.show === '1' ? 'grid' : 'none';
+  canvas.style.cursor = state.playing && state.pointerLocked ? 'none' : 'default';
 }
 
 function sendInput(force = false) {
@@ -90,6 +97,7 @@ window.addEventListener('keyup', (e) => {
 
 document.addEventListener('pointerlockchange', () => {
   state.pointerLocked = document.pointerLockElement === canvas;
+  syncUi();
 });
 
 canvas.addEventListener('mousemove', (e) => {
@@ -153,16 +161,80 @@ socket.on('joined', ({ id, name, worldSize, spawn }) => {
   state.camera.y = spawn?.y || state.camera.y;
   state.targetZoom = state.playZoom;
   deadOverlay.dataset.show = '0';
+  state.shockwaves.push({
+    x: state.camera.x,
+    y: state.camera.y,
+    radius: 10,
+    maxRadius: 90,
+    life: 0,
+    ttl: 0.35,
+  });
   showAnnouncement(name);
-  canvas.requestPointerLock?.();
-  sendInput(true);
   syncUi();
+  sendInput(true);
 });
 
 socket.on('state', (snapshot) => {
   state.snapshot = snapshot;
+
   const me = snapshot.players.find((p) => p.id === state.id);
   state.me = me || null;
+
+  const seenPlayers = new Set();
+  for (const p of snapshot.players) {
+    seenPlayers.add(p.id);
+    const existing = state.renderPlayers.get(p.id);
+    if (!existing) {
+      state.renderPlayers.set(p.id, {
+        id: p.id,
+        x: p.x,
+        y: p.y,
+        angle: p.angle || 0,
+        targetX: p.x,
+        targetY: p.y,
+        targetAngle: p.angle || 0,
+        health: p.health,
+        maxHealth: p.maxHealth,
+        name: p.name,
+        color: p.color,
+      });
+    } else {
+      existing.targetX = p.x;
+      existing.targetY = p.y;
+      existing.targetAngle = p.angle || 0;
+      existing.health = p.health;
+      existing.maxHealth = p.maxHealth;
+      existing.name = p.name;
+      existing.color = p.color;
+    }
+  }
+  for (const id of [...state.renderPlayers.keys()]) {
+    if (!seenPlayers.has(id)) state.renderPlayers.delete(id);
+  }
+
+  const seenBullets = new Set();
+  for (const b of snapshot.bullets) {
+    seenBullets.add(b.id);
+    const existing = state.renderBullets.get(b.id);
+    if (!existing) {
+      state.renderBullets.set(b.id, {
+        id: b.id,
+        x: b.x,
+        y: b.y,
+        angle: b.angle || 0,
+        targetX: b.x,
+        targetY: b.y,
+      });
+    } else {
+      existing.targetX = b.x;
+      existing.targetY = b.y;
+      existing.angle = b.angle || 0;
+    }
+  }
+  for (const id of [...state.renderBullets.keys()]) {
+    if (!seenBullets.has(id)) state.renderBullets.delete(id);
+  }
+
   if (me) {
     if (!state.pointerLocked) state.aimAngle = me.angle || 0;
     const ratio = Math.max(0, Math.min(1, me.health / me.maxHealth));
@@ -201,6 +273,13 @@ function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
+function angleLerp(a, b, t) {
+  let diff = b - a;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  return a + diff * t;
+}
+
 function worldToScreen(x, y, camX, camY, zoom) {
   return {
     x: (x - camX) * zoom + window.innerWidth / 2,
@@ -220,6 +299,7 @@ function drawWorld(camX, camY, zoom) {
   const offsetY = -(((camY * zoom) - h / 2) % (grid * zoom));
   ctx.strokeStyle = 'rgba(0,0,0,0.06)';
   ctx.lineWidth = 1;
+
   for (let x = offsetX; x < w; x += grid * zoom) {
     ctx.beginPath();
     ctx.moveTo(x, 0);
@@ -247,54 +327,42 @@ function drawBullet(b, camX, camY, zoom) {
   ctx.fill();
 }
 
-function drawMouse(p, x, y, size) {
-  const body = size * 0.46;
-  const ear = size * 0.18;
-  const gunW = size * 0.42;
-  const gunH = Math.max(4, size * 0.12);
-
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(p.angle || 0);
-
-  ctx.strokeStyle = '#111';
-  ctx.lineWidth = Math.max(2, size * 0.07);
-  ctx.lineCap = 'round';
-
-  ctx.beginPath();
-  ctx.moveTo(-body * 0.7, 0);
-  ctx.quadraticCurveTo(-body * 1.7, -body * 0.55, -body * 1.2, -body * 0.05);
-  ctx.stroke();
-
-  ctx.fillStyle = '#fff';
-  ctx.beginPath();
-  ctx.arc(-body * 0.2, -body * 0.62, ear, 0, Math.PI * 2);
-  ctx.arc(-body * 0.2, body * 0.62, ear, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.ellipse(0, 0, body, body * 0.72, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = '#111';
-  ctx.beginPath();
-  ctx.arc(body * 0.35, 0, Math.max(1.5, size * 0.05), 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillRect(body * 0.18, -gunH / 2, gunW, gunH);
-  ctx.fillRect(body * 0.18 + gunW - gunH * 0.3, -gunH * 0.9, gunH * 0.6, gunH * 1.8);
-
-  ctx.restore();
+function drawShockwaves(dt, camX, camY, zoom) {
+  for (let i = state.shockwaves.length - 1; i >= 0; i--) {
+    const s = state.shockwaves[i];
+    s.life += dt;
+    const t = s.life / s.ttl;
+    if (t >= 1) {
+      state.shockwaves.splice(i, 1);
+      continue;
+    }
+    const radius = lerp(s.radius, s.maxRadius, t);
+    const p = worldToScreen(s.x, s.y, camX, camY, zoom);
+    ctx.strokeStyle = `rgba(0,0,0,${(1 - t) * 0.22})`;
+    ctx.lineWidth = Math.max(1, 5 * zoom * (1 - t * 0.4));
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius * zoom, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 }
 
 function drawPlayer(p, camX, camY, zoom) {
   const pos = worldToScreen(p.x, p.y, camX, camY, zoom);
   const me = p.id === state.id;
-  const size = Math.max(14, (me ? 44 : 36) * zoom);
+  const size = Math.max(16, (me ? 56 : 46) * zoom);
 
-  drawMouse(p, pos.x, pos.y, size);
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  ctx.rotate(p.angle || 0);
+
+  if (mouseSprite.complete) {
+    ctx.drawImage(mouseSprite, -size / 2, -size / 2, size, size);
+  } else {
+    ctx.fillStyle = '#111';
+    ctx.fillRect(-size / 2, -size / 3, size, size * 0.66);
+  }
+
+  ctx.restore();
 
   if (zoom > 0.42 || me) {
     ctx.fillStyle = '#111';
@@ -308,9 +376,9 @@ function drawPlayer(p, camX, camY, zoom) {
     const h = Math.max(3, 5 * zoom);
     const ratio = Math.max(0, Math.min(1, p.health / p.maxHealth));
     ctx.fillStyle = 'rgba(0,0,0,0.1)';
-    ctx.fillRect(pos.x - w / 2, pos.y + size * 0.78, w, h);
+    ctx.fillRect(pos.x - w / 2, pos.y + size * 0.72, w, h);
     ctx.fillStyle = '#111';
-    ctx.fillRect(pos.x - w / 2, pos.y + size * 0.78, w * ratio, h);
+    ctx.fillRect(pos.x - w / 2, pos.y + size * 0.72, w * ratio, h);
   }
 }
 
@@ -339,14 +407,32 @@ function drawLobbyLabel() {
   ctx.fillText('Pick a name while watching the map', 30, 57);
 }
 
+let lastFrame = performance.now();
+
 function render() {
   requestAnimationFrame(render);
 
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - lastFrame) / 1000);
+  lastFrame = now;
+
   state.zoom = lerp(state.zoom, state.targetZoom, 0.08);
 
-  if (state.me && state.playing) {
-    state.camera.x = lerp(state.camera.x, state.me.x, 0.12);
-    state.camera.y = lerp(state.camera.y, state.me.y, 0.12);
+  for (const p of state.renderPlayers.values()) {
+    p.x = lerp(p.x, p.targetX, 0.22);
+    p.y = lerp(p.y, p.targetY, 0.22);
+    p.angle = angleLerp(p.angle || 0, p.targetAngle || 0, 0.22);
+  }
+
+  for (const b of state.renderBullets.values()) {
+    b.x = lerp(b.x, b.targetX, 0.35);
+    b.y = lerp(b.y, b.targetY, 0.35);
+  }
+
+  const renderedMe = state.renderPlayers.get(state.id);
+  if (renderedMe && state.playing) {
+    state.camera.x = lerp(state.camera.x, renderedMe.x, 0.12);
+    state.camera.y = lerp(state.camera.y, renderedMe.y, 0.12);
   } else {
     state.camera.x = lerp(state.camera.x, state.worldSize / 2, 0.04);
     state.camera.y = lerp(state.camera.y, state.worldSize / 2, 0.04);
@@ -357,8 +443,12 @@ function render() {
   const zoom = state.zoom;
 
   drawWorld(camX, camY, zoom);
-  for (const b of state.snapshot.bullets || []) drawBullet(b, camX, camY, zoom);
-  for (const p of state.snapshot.players || []) drawPlayer(p, camX, camY, zoom);
+
+  for (const b of state.renderBullets.values()) drawBullet(b, camX, camY, zoom);
+  for (const p of state.renderPlayers.values()) drawPlayer(p, camX, camY, zoom);
+
+  drawShockwaves(dt, camX, camY, zoom);
+
   if (state.playing) drawCrosshair();
   if (!state.joined) drawLobbyLabel();
   if (state.joined) sendInput();
