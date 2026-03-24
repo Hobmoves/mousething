@@ -6,7 +6,7 @@
   <title>MouseThing Arena</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -15,36 +15,22 @@
   <div id="announcement" aria-live="polite"></div>
 
   <div id="hud">
-    <div class="hud-row">
-      <div id="nameTag">@Mouse</div>
-      <div id="statusText">Connecting…</div>
-    </div>
     <div class="bar"><div id="healthBar"></div></div>
-    <div id="healthText">100 / 100</div>
-    <div id="hint">Click the game to lock pointer · WASD move · mouse turns · click to fire</div>
+    <div id="healthText">100</div>
   </div>
 
   <div class="panel" id="loginOverlay">
-    <div class="panel-inner">
-      <div class="brand">
-        <div class="brand-badge">🐭</div>
-        <div>
-          <h1>MouseThing Arena</h1>
-          <p>Bright top-down multiplayer. Other players render live, pointer lock works, and dying kicks you out.</p>
-        </div>
-      </div>
-      <form id="joinForm" class="form">
-        <input id="nameInput" type="text" maxlength="18" placeholder="Pick a name" autocomplete="off" />
-        <button type="submit">Play</button>
-      </form>
-    </div>
+    <form id="joinForm" class="form">
+      <input id="nameInput" type="text" maxlength="18" placeholder="name" autocomplete="off" />
+      <button type="submit">join</button>
+    </form>
   </div>
 
   <div class="overlay" id="deadOverlay">
     <div class="overlay-card">
-      <h2>You got kicked</h2>
+      <h2>out</h2>
       <p id="deadReason">Rejoin to jump back in.</p>
-      <button id="backButton">Back to lobby</button>
+      <button id="backButton">back</button>
     </div>
   </div>
 
