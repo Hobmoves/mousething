@@ -2,38 +2,70 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
   <title>MouseThing Arena</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/mouse.png" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <canvas id="game"></canvas>
+  <div id="hurt"></div>
 
-  <div id="announcement" aria-live="polite"></div>
+  <div id="killfeed"></div>
+
+  <div id="centerMsg"></div>
 
   <div id="hud">
-    <div class="bar"><div id="healthBar"></div></div>
-    <div id="healthText">100</div>
+    <div class="hud-row">
+      <div class="stat">
+        <div class="label">health</div>
+        <div class="bar"><div id="healthFill"></div></div>
+      </div>
+      <div id="healthNum">100</div>
+    </div>
+    <div class="hud-row">
+      <div class="stat">
+        <div class="label">dash <span class="key">space</span></div>
+        <div class="bar thin"><div id="dashFill"></div></div>
+      </div>
+    </div>
+    <div class="hud-row weapon">
+      <div id="weaponName">Pointer</div>
+      <div id="ammoText">14 / &infin;</div>
+    </div>
+    <div id="reloadWrap"><div class="bar thin"><div id="reloadFill"></div></div><span>reloading</span></div>
   </div>
 
-  <div class="panel" id="loginOverlay">
-    <form id="joinForm" class="form">
-      <input id="nameInput" type="text" maxlength="18" placeholder="name" autocomplete="off" />
-      <button type="submit">join</button>
-    </form>
+  <div id="scoreboard">
+    <table>
+      <thead><tr><th>player</th><th>k</th><th>d</th><th>str</th></tr></thead>
+      <tbody id="scoreBody"></tbody>
+    </table>
   </div>
 
-  <div class="overlay" id="deadOverlay">
-    <div class="overlay-card">
-      <h2>out</h2>
-      <p id="deadReason">Rejoin to jump back in.</p>
-      <button id="backButton">back</button>
+  <div id="login">
+    <div class="card">
+      <h1>MouseThing</h1>
+      <p class="tag">A cursor deathmatch.</p>
+      <form id="joinForm">
+        <input id="nameInput" type="text" maxlength="16" placeholder="your name" autocomplete="off" />
+        <button type="submit">play</button>
+      </form>
+      <ul class="controls">
+        <li><span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> move &mdash; always screen-relative</li>
+        <li><span class="key">mouse</span> aim &mdash; you point where the cursor is</li>
+        <li><span class="key">click</span> hold to fire</li>
+        <li><span class="key">space</span> / <span class="key">right-click</span> dash</li>
+        <li><span class="key">R</span> reload &nbsp; <span class="key">tab</span> scores &nbsp; <span class="key">M</span> sound</li>
+      </ul>
+      <button id="soundBtn" class="ghost" type="button">sound on (M)</button>
     </div>
   </div>
 
+  <script src="/shared.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/client.js"></script>
 </body>
